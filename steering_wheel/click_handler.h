@@ -4,6 +4,10 @@
 #include <Arduino.h>
 #include <RingBuf.h>
 
+#ifndef SOFTWARE_DEBOUNCING
+#define SOFTWARE_DEBOUNCING 1
+#endif
+
 namespace click_handler
 {
     static constexpr struct {
@@ -21,11 +25,13 @@ namespace click_handler
 namespace {
     // Every button have the same logic, so I use a template
     // to have different handler for different pins.
-    // This function implement also a fast debounce algorithm
+    // This function implement also a fast debounce algorithm that
     // to remove spurious interrupts: to work properly is needed
     // that interrupt mode is setted to CHANGE.
+    // P.S. Software debouncing can be disabled at compile time 
     template <uint8_t pin> void handler()
     {
+        #if SOFTWARE_DEBOUNCING == 1
         volatile static bool clicked = false;
         static uint64_t last_time = 0;
         uint64_t curr_time = millis();
@@ -38,6 +44,9 @@ namespace {
         clicked = digitalRead(pin) == LOW;
     
         last_time = curr_time;
+        #else
+        click_handler::m_ring.push(pin);
+        #endif
     }
 
     // Magic, compile time efficient init.
@@ -45,7 +54,11 @@ namespace {
     {
         constexpr uint8_t *p{(uint8_t *)&click_handler::pins};
         pinMode(p[N-1], INPUT_PULLUP);
+        #if SOFTWARE_DEBOUNCING == 1
         attachInterrupt(digitalPinToInterrupt(p[N-1]), handler<p[N-1]>, CHANGE);
+        #else
+        attachInterrupt(digitalPinToInterrupt(p[N-1]), handler<p[N-1]>, FALLING);
+        #endif
 
         init_interrupts<N-1>();
     }
