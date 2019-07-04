@@ -32,6 +32,7 @@ namespace display {
                 (uint8_t *) &can_handler::hz3,
                 sizeof(can_handler::hz3)
             );
+            can_handler::hz3.NEXT_LAYOUT = 0;
         }
     }
 

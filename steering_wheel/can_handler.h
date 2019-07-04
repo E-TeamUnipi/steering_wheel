@@ -1,71 +1,72 @@
 #ifndef can_handler_h
 #define can_handler_h
 
+#include <utility>
 #include <due_can.h>
 #include "byteorder.h"
 
-#define ID_GEAR 0x601
-
-namespace {
-    struct can_id_pos {
-        uint16_t id;
-        uint8_t pos;
-    };
-}
-
-
 namespace can_handler {
-
-    static constexpr struct {
-        const can_id_pos RPM{0x600, 1};
-        const can_id_pos GEAR{0x601, 1};
-    } ids;
 
     struct __attribute__((packed)) {
         uint8_t sep[4]{'A', 'C', 'K', 25};
         uint16_t RPM{0};
-        uint16_t TPS{0};
-        uint16_t MAP{0};
+        float TPS{0};
+        float PPS{0};
+        float MAP{0};
     } volatile hz25;
 
     struct __attribute__((packed)) {
         uint8_t sep[4]{'A', 'C', 'K', 3};
-        uint16_t EOT{20}; // engine oil temp
-        uint16_t ECT{20}; // engine coolant(water) temp
-        uint16_t EOP{20}; // engine oil pressure
+        float EOT{25.4}; // engine oil temp
+        float ECT{20.2}; // engine coolant(water) temp
+        float EOP{20}; // engine oil pressure
 
-        uint16_t BATTERY{0};
+        float BATTERY{12.3};
 
         uint8_t GEAR{1};
 
-        uint8_t LIMP;
+        uint8_t LIMP{0};
         uint8_t LAUNCH{0};
+
+        uint8_t NEXT_LAYOUT{0};
     } volatile hz3;
 }
 
 // hidden
-namespace {
+namespace {    
     CANRaw *g_can{nullptr};
-    constexpr uint32_t can_lst_id{0x600};
-    constexpr uint32_t can_hst_id{0x640};
 
-    // Here we receive frames, we filter fast and add
-    // it to the ring
+    float map_float(float t_val, float t_in_min, float t_in_max, float t_out_min, float t_out_max)
+    {
+        return (t_val - t_in_min)*(t_out_max - t_out_min)/(t_in_max - t_in_min) + t_out_min;
+    }
+
     void routine(CAN_FRAME *t_frame)
     {
-        // TODO: This is an example to remember
-        //       the logic.
         switch(t_frame->id) {
-            case can_handler::ids.RPM.id: {
+            case 0x300: {
+                break;
+            }
+            case 0x302: {
+                can_handler::hz3.GEAR = t_frame->data.bytes[5];
+                can_handler::hz3.LIMP = t_frame->data.s1;
+                can_handler::hz25.PPS = map_float(byteorder::ctohs(t_frame->data.s3), 0x000, 0x3ff, 0, 100);
+                break;
+            }
+            case 0x304: {
                 can_handler::hz25.RPM = byteorder::ctohs(t_frame->data.s0);
+                can_handler::hz3.LAUNCH = byteorder::ctohs(t_frame->data.s1);
+                can_handler::hz3.ECT = map_float(byteorder::ctohs(t_frame->data.s3), 0x20, 0xff, 10, 150);
+                can_handler::hz25.TPS = map_float(byteorder::ctohs(t_frame->data.s2), 0x000, 0x3ff, 0, 100);
                 break;
             }
-            case ID_GEAR: {
-                can_handler::hz3.GEAR = t_frame->data.bytes[0];
+            case 0x306: {
+                can_handler::hz3.EOP = byteorder::ctohs(t_frame->data.s0);
+                can_handler::hz3.EOT = map_float(byteorder::ctohs(t_frame->data.s1), 0x20, 0xff, 10, 150);
                 break;
             }
-            case 0x603: {
-                can_handler::hz3.EOT = byteorder::ctohs(t_frame->data.s0);
+            case 0x308: {
+                can_handler::hz3.BATTERY = t_frame->data.bytes[5] * 14.25 / 255.0;
                 break;
             }
         }
@@ -76,16 +77,17 @@ namespace can_handler {
     bool init()
     {
         g_can = []() -> CANRaw * {
-            if (Can0.begin(CAN_BPS_1000K)) {
+            if (Can0.init(CAN_BPS_1000K)) {
                 return &Can0;
-            } else if (Can1.begin(CAN_BPS_1000K)) {
+            } else if (Can1.init(CAN_BPS_1000K)) {
                 return &Can1;
             }
             return nullptr;
         }();
 
         if (g_can) {
-            g_can->watchForRange(can_lst_id, can_hst_id);
+            // from 0x300 to 0x30F accepted.
+            g_can->watchFor(0x300, 0x7F0);
             g_can->setGeneralCallback(routine);
 
             return true;

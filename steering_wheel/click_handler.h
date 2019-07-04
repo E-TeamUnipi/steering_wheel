@@ -10,19 +10,34 @@
 
 namespace click_handler
 {
+    enum click_type {UP, DOWN};
+
+    struct pin_click {
+        uint8_t pin;
+        click_type type;
+
+    };
+    
     static constexpr struct {
-        const uint8_t upshift{22};
-        const uint8_t downshift{23};
+        const uint8_t upshift{7};
+        const uint8_t downshift{6};
+        const uint8_t neutral{5};
+        const uint8_t launch{4};
+        
+        const uint8_t next_layout{2};
     } pins;
 
     // I suppose and hope that the driver is not crazy, so a ring
-    // of size 32 is big enough: to overflow the driver need to
+    // of size 16 is big enough: to overflow the driver need to
     // click buttons really fast, beyond human capabilities :/
-    RingBuf<uint8_t, 32> m_ring;
+    RingBuf<pin_click, 16> m_ring;
 }
 
 // hidden
 namespace {
+    using click_handler::pin_click;
+    using click_handler::click_type;
+    
     // Every button have the same logic, so I use a template
     // to have different handler for different pins.
     // This function implement also a fast debounce algorithm that
@@ -32,16 +47,27 @@ namespace {
     template <uint8_t pin> void handler()
     {
         #if SOFTWARE_DEBOUNCING == 1
-        volatile static bool clicked = false;
+        volatile static bool down = false;
+        volatile static bool up = false;
         static uint64_t last_time = 0;
         uint64_t curr_time = millis();
 
-        if (!clicked && curr_time - last_time > 40) {
+        click_handler::pin_click p;
+        p.pin = pin;
+
+        if (curr_time - last_time > 40) {
             // the handler works with interrupt disabled, so
             // is safe to not lock the push
-            click_handler::m_ring.push(pin);
+            if (!down) {
+                p.type = click_type::DOWN;
+                click_handler::m_ring.push(p);
+            } else if (!up) {
+                p.type = click_type::UP;
+                click_handler::m_ring.push(p);
+            }    
         }
-        clicked = digitalRead(pin) == LOW;
+        down = digitalRead(pin) == LOW;
+        up = digitalRead(pin) == HIGH;
     
         last_time = curr_time;
         #else
@@ -49,7 +75,6 @@ namespace {
         #endif
     }
 
-    // Magic, compile time efficient init.
     template<size_t N> void init_interrupts()
     {
         constexpr uint8_t *p{(uint8_t *)&click_handler::pins};
@@ -70,6 +95,7 @@ namespace click_handler
     // TODO: find a better way to call init_interrupts.
     void init()
     {
+        
         init_interrupts<sizeof(pins)>();
     }
     
