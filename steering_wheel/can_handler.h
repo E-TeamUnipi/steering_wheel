@@ -30,6 +30,8 @@ namespace can_handler {
 
         uint8_t NEXT_LAYOUT{0};
     } volatile hz3;
+
+    volatile uint16_t car_speed{0};
 }
 
 // hidden
@@ -45,6 +47,7 @@ namespace {
     {
         switch(t_frame->id) {
             case 0x300: {
+                can_handler::hz3.LAUNCH = t_frame->data.bytes[5];
                 break;
             }
             case 0x302: {
@@ -67,6 +70,7 @@ namespace {
             }
             case 0x308: {
                 can_handler::hz3.BATTERY = t_frame->data.bytes[5] * 14.25 / 255.0;
+                can_handler::car_speed = byteorder::ctohs(t_frame->data.s3);
                 break;
             }
         }

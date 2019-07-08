@@ -48,26 +48,21 @@ namespace {
     {
         #if SOFTWARE_DEBOUNCING == 1
         volatile static bool down = false;
-        volatile static bool up = false;
         static uint64_t last_time = 0;
         uint64_t curr_time = millis();
 
         click_handler::pin_click p;
         p.pin = pin;
 
-        if (curr_time - last_time > 40) {
+        if (curr_time - last_time > 70) {
             // the handler works with interrupt disabled, so
             // is safe to not lock the push
             if (!down) {
                 p.type = click_type::DOWN;
                 click_handler::m_ring.push(p);
-            } else if (!up) {
-                p.type = click_type::UP;
-                click_handler::m_ring.push(p);
-            }    
+            }
         }
         down = digitalRead(pin) == LOW;
-        up = digitalRead(pin) == HIGH;
     
         last_time = curr_time;
         #else
