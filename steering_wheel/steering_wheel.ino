@@ -2,28 +2,26 @@
 #include "display.h"
 #include "can_handler.h"
 
-// #define SOFTWARE_DEBOUNCING 1
-// #include "click_handler.h"
-
 // Remove loop overhead, never called!
 void loop(){}
 
-struct {
+struct __attribute__((packed)) {
     bool upshift{false};
-    bool downshift{false};  
+    bool downshift{false};
     bool neutral{false};
     bool launch{false};
+
     bool next_layout{false};
 } volatile buttons_status;
 
     
-static constexpr struct {
+static constexpr struct __attribute__((packed)) {
     const uint8_t upshift{7};
     const uint8_t downshift{6};
-    const uint8_t neutral{5};
+    const uint8_t neutral{2};
     const uint8_t launch{4};
         
-    const uint8_t next_layout{2};
+    const uint8_t next_layout{22};
 } buttons_pins;
 
 void setup()
@@ -51,21 +49,29 @@ void update_buttons_status() {
     }
 }
 
+bool shifted{true};
+bool launched{false};
+bool layout_changing{false};
+uint64_t last_rest{0};
+
 void _main()
 {
-    uint64_t last_cmd = 0;
-    uint64_t last_rest = 0;
+    uint64_t last_cmd{0};
     uint64_t curr_time = millis();
-    volatile bool neutral_enabled = false;
     
     for(;;) {
         update_buttons_status();
-        bool shifted{true};
-
         curr_time = millis();
 
-        if (curr_time - last_cmd > 100) {
-            last_cmd = ([&last_rest, curr_time, &shifted]() {
+        if (layout_changing) {
+            layout_changing = buttons_status.next_layout;
+        } else if (buttons_status.next_layout) {
+            layout_changing = true;
+            can_handler::hz3.NEXT_LAYOUT = 1; 
+        }      
+
+        if (curr_time - last_cmd > 50) {
+            last_cmd = ([curr_time]() mutable {
                 CAN_FRAME can_shift{0};
                 can_shift.length = sizeof(CAN_FRAME);
                 can_shift.id = 0x500;
@@ -81,14 +87,24 @@ void _main()
                     shifted = false;
                 }
 
-                
-                if (can_handler::hz3.LAUNCH && can_handler::hz3.GEAR < 4) {
-                    if (can_handler::hz25.RPM > 10900 && can_handler::car_speed >= 5) {
-                        can_shift.data.s0 = byteorder::htocs(0x006f);
-                        can_shift.data.s1 = 0x0000;
-                        can_handler::send(can_shift);
-                        return true;
-                    }    
+                if (launched && !buttons_status.launch) {
+                    last_rest = curr_time;
+                    // Send rest state to EFI
+                    can_shift.data.s0 = byteorder::htocs(0x029A);
+                    can_shift.data.s1 = 0x0000;
+                    can_handler::send(can_shift);
+
+                    launched = false;
+                }
+
+                if (can_handler::hz3.LAUNCH && can_handler::hz3.GEAR < 4 &&
+                    can_handler::hz25.RPM > 10900 && can_handler::car_speed > 5) {
+ 
+                    can_shift.data.s0 = byteorder::htocs(0x006f);
+                    can_shift.data.s1 = 0x0000;
+                    can_handler::send(can_shift);
+
+                    return true;
                 }
                 
                 if (buttons_status.upshift && can_handler::hz3.GEAR < 4) {
@@ -107,18 +123,19 @@ void _main()
 
                     shifted = true;
 
-                    return true;                    
+                    return true;           
                 }
 
                 if (buttons_status.launch) {
                     can_shift.data.s0 = byteorder::htocs(0x029A);
                     can_shift.data.s1 = 0x0000;
-                    can_shift.data.s2 = can_handler::hz3.LAUNCH? 0: byteorder::htocs(1);
+                    can_shift.data.s2 = 0x0000;
                     can_handler::send(can_shift);
+
+                    launched = true;
 
                     return true;
                 }
-
                 
                 return false;
             }())? curr_time: last_cmd;

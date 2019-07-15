@@ -8,24 +8,24 @@
 namespace can_handler {
 
     struct __attribute__((packed)) {
-        uint8_t sep[4]{'A', 'C', 'K', 25};
-        uint16_t RPM{0};
+        uint8_t sep[6]{'K', 'e', 'r', 25, 'u', 'B'};
+        uint16_t RPM{10000};
         float TPS{0};
         float PPS{0};
         float MAP{0};
     } volatile hz25;
 
     struct __attribute__((packed)) {
-        uint8_t sep[4]{'A', 'C', 'K', 3};
-        float EOT{25.4}; // engine oil temp
-        float ECT{20.2}; // engine coolant(water) temp
+        uint8_t sep[6]{'K', 'e', 'r', 3, 'u', 'B'};
+        float EOT{25}; // engine oil temp
+        float ECT{20}; // engine coolant(water) temp
         float EOP{20}; // engine oil pressure
 
-        float BATTERY{12.3};
+        float BATTERY{13.3};
 
-        uint8_t GEAR{1};
+        uint8_t GEAR{4};
 
-        uint8_t LIMP{0};
+        uint8_t LIMP{1};
         uint8_t LAUNCH{0};
 
         uint8_t NEXT_LAYOUT{0};
@@ -52,7 +52,7 @@ namespace {
             }
             case 0x302: {
                 can_handler::hz3.GEAR = t_frame->data.bytes[5];
-                can_handler::hz3.LIMP = t_frame->data.s1;
+                can_handler::hz3.LIMP = t_frame->data.s1 != 0x0000;
                 can_handler::hz25.PPS = map_float(byteorder::ctohs(t_frame->data.s3), 0x000, 0x3ff, 0, 100);
                 break;
             }
@@ -60,7 +60,7 @@ namespace {
                 can_handler::hz25.RPM = byteorder::ctohs(t_frame->data.s0);
                 can_handler::hz3.LAUNCH = byteorder::ctohs(t_frame->data.s1);
                 can_handler::hz3.ECT = map_float(byteorder::ctohs(t_frame->data.s3), 0x20, 0xff, 10, 150);
-                can_handler::hz25.TPS = map_float(byteorder::ctohs(t_frame->data.s2), 0x000, 0x3ff, 0, 100);
+                can_handler::hz25.TPS = map_float(byteorder::ctohs(t_frame->data.s2), 0x00, 0xff, 0, 100);
                 break;
             }
             case 0x306: {
@@ -69,7 +69,15 @@ namespace {
                 break;
             }
             case 0x308: {
-                can_handler::hz3.BATTERY = t_frame->data.bytes[5] * 14.25 / 255.0;
+
+                // 02 FA, FB 13.36, 13.38
+                // 02 F3            13.27
+                // 02 F1            13.15
+                // 13.38:02FB = 13.15:0x2f1
+                //13.08, 02ec
+                //can_handler::hz3.BATTERY = t_frame->data.bytes[5] * 14.25 / 255.0;
+//                can_handler::hz3.BATTERY = map_float(byteorder::ctohs(t_frame->data.s2), 0x2ec, 0x2fa, 13.06, 13.38);
+                can_handler::hz3.BATTERY = map_float(byteorder::ctohs(t_frame->data.s2), 0x0000, 0x03ff, 0, 18);
                 can_handler::car_speed = byteorder::ctohs(t_frame->data.s3);
                 break;
             }
