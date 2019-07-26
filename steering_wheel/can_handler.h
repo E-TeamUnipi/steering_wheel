@@ -9,7 +9,7 @@ namespace can_handler {
 
     struct __attribute__((packed)) {
         uint8_t sep[6]{'K', 'e', 'r', 25, 'u', 'B'};
-        uint16_t RPM{10000};
+        uint16_t RPM{0};
         float TPS{0};
         float PPS{0};
         float MAP{0};
@@ -47,9 +47,9 @@ namespace {
     {
         switch(t_frame->id) {
             case 0x300: {
-                can_handler::hz3.LAUNCH = t_frame->data.bytes[5];
+                //can_handler::hz3.LAUNCH = t_frame->data.bytes[5];
                 break;
-            }
+             }
             case 0x302: {
                 can_handler::hz3.GEAR = t_frame->data.bytes[5];
                 can_handler::hz3.LIMP = t_frame->data.s1 != 0x0000;
