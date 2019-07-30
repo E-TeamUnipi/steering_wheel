@@ -53,7 +53,10 @@ bool shifted{true};
 bool launched{false};
 bool neutraled{false};
 bool layout_changing{false};
+volatile bool launch_window{false};
 uint64_t last_rest{0};
+uint64_t launch_time{0};
+uint64_t shift_time{0};
 
 void _main()
 {
@@ -111,6 +114,7 @@ void _main()
                     can_handler::send(can_clutch);
 
                     neutraled = false;
+                    
                     return true;
                 // 0 1
                 } else if (!neutraled && buttons_status.neutral) {
@@ -123,10 +127,23 @@ void _main()
                     neutraled = true;
                     return true;
                 }
+                
+                if (curr_time - launch_time > 10000) {
+                    launch_window = false;
+                }
 
-                if (can_handler::hz3.LAUNCH) {                    
-                    if (can_handler::hz3.GEAR < 4 && can_handler::hz25.RPM > 12000 &&
-                        !buttons_status.neutral /*can_handler::car_speed > 5*/) { // !!!!!
+                if (can_handler::hz3.LAUNCH) {
+//                    Serial.println("entrato");
+                    launch_window = true;
+                    launch_time = millis();
+                }
+
+//                Serial.print("launch_window");
+//                Serial.println(launch_window);
+
+                if (launch_window && can_handler::hz3.GEAR < 4 &&
+                        can_handler::hz25.RPM > 12000 /* && curr_time - shift_time >= 100/*&&
+                        /*!buttons_status.neutral /*can_handler::car_speed > 5*/) { // !!!!!
  
                         can_shift.data.s0 = byteorder::htocs(0x006f);
                         can_shift.data.s1 = 0x0000;
@@ -134,9 +151,11 @@ void _main()
 
                         shifted = true;
 
+                        shift_time = millis();
+
                         return true;
-                    }                    
-                }    
+
+                }
                 
                 if (buttons_status.upshift && (can_handler::hz3.GEAR < 4 || can_handler::hz3.GEAR >= 8)) {
                     can_shift.data.s0 = byteorder::htocs(0x006f);
@@ -147,7 +166,7 @@ void _main()
 
                     shifted = true;
                     return true;
-                }
+                }                    
                 
                 if (buttons_status.downshift) {
                     can_shift.data.s0 = byteorder::htocs(0x03e7);
@@ -175,6 +194,7 @@ void _main()
                 
                 return false;
             }())? curr_time: last_cmd;
+         
         }
 
     
