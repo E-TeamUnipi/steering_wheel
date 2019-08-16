@@ -1,7 +1,6 @@
 #ifndef can_handler_h
 #define can_handler_h
 
-#include <utility>
 #include <due_can.h>
 #include "byteorder.h"
 
@@ -23,10 +22,12 @@ namespace can_handler {
 
         float BATTERY{13.3};
 
-        uint8_t GEAR{4};
+        uint8_t GEAR{7};
 
         uint8_t LIMP{1};
         uint8_t LAUNCH{0};
+        uint8_t MAP_ACTIVE{1};
+        uint8_t LIMITER_ACTIVE{0};
 
         uint8_t NEXT_LAYOUT{0};
     } volatile hz3;
@@ -51,6 +52,7 @@ namespace {
                 break;
              }
             case 0x302: {
+                can_handler::hz3.MAP_ACTIVE = t_frame->data.bytes[1];
                 can_handler::hz3.GEAR = t_frame->data.bytes[5];
                 can_handler::hz3.LIMP = t_frame->data.s1 != 0x0000;
                 can_handler::hz25.PPS = map_float(byteorder::ctohs(t_frame->data.s3), 0x000, 0x3ff, 0, 100);
@@ -69,6 +71,7 @@ namespace {
                 break;
             }
             case 0x308: {
+                can_handler::hz3.LIMITER_ACTIVE = t_frame->data.bytes[1];
 
                 // 02 FA, FB 13.36, 13.38
                 // 02 F3            13.27

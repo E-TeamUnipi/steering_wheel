@@ -1,28 +1,10 @@
 #include "byteorder.h"
 #include "display.h"
 #include "can_handler.h"
+#include "avdweb_Switch.h"
 
 // Remove loop overhead, never called!
 void loop(){}
-
-struct __attribute__((packed)) {
-    bool upshift{false};
-    bool downshift{false};
-    bool neutral{false};
-    bool launch{false};
-
-    bool next_layout{false};
-} volatile buttons_status;
-
-    
-static constexpr struct __attribute__((packed)) {
-    const uint8_t upshift{7};
-    const uint8_t downshift{6};
-    const uint8_t neutral{4};
-    const uint8_t launch{22};
-        
-    const uint8_t next_layout{2};
-} buttons_pins;
 
 void setup()
 {
@@ -30,174 +12,186 @@ void setup()
 
     while(!can_handler::init());
 
-    for (size_t i{0};i < sizeof(buttons_status); ++i) {
-        constexpr uint8_t *p{(uint8_t *)&buttons_pins};
-        pinMode(p[i], INPUT_PULLUP);
-    }
-
     display::init();
 
     _main();
 }
 
-inline
-void update_buttons_status() {
-    constexpr uint8_t *bp{(uint8_t *)&buttons_pins};
-    constexpr uint8_t *bs{(uint8_t *)&buttons_status};
-    for (size_t i{0}; i < sizeof(buttons_status); ++i) {
-        bs[i] = digitalRead(bp[i]) == LOW;
-    }
+Switch upshift{7};
+Switch downshift{6};
+Switch neutral{12};
+Switch limiter{11};
+Switch launch{10};
+Switch next_layout{9};
+
+
+CAN_FRAME can_500{0};
+
+// The neutral is not saved directly inside the frame because we want that
+// works only on paddle shifts
+uint16_t neutral_field{0};
+
+bool limiter_on{false};
+
+bool upshift_possible()
+{
+    return can_handler::hz3.GEAR < 4 || can_handler::hz3.GEAR >= 8;
 }
 
-bool shifted{true};
-bool launched{false};
-bool neutraled{false};
-bool layout_changing{false};
-volatile bool launch_window{false};
-uint64_t last_rest{0};
-uint64_t launch_time{0};
-uint64_t shift_time{0};
+void shift_release(void* t_arg)
+{
+    can_500.data.s0 = byteorder::htocs(0x029A); // shift
+    can_500.data.s1 = 0x0000;                   // neutral
+
+    can_handler::send(can_500);
+}
+
+void upshift_push(void* t_arg)
+{
+    if (!upshift_possible()) {
+        return;
+    }
+
+    can_500.data.s0 = byteorder::htocs(0x006f);
+    can_500.data.s1 = neutral_field;
+
+    can_handler::send(can_500);
+}
+
+void downshift_push(void * t_arg)
+{
+    can_500.data.s0 = byteorder::htocs(0x03e7);
+    can_500.data.s1 = neutral_field;
+
+    can_handler::send(can_500);
+}
+
+void neutral_longpress(void* t_arg)
+{
+    neutral_field = byteorder::htocs(0x03ff);
+//    can_500.data.s1 = byteorder::htocs(0x03ff);
+
+//    can_handler::send(can_500);
+}
+
+void neutral_release(void * t_arg)
+{
+    neutral_field = 0x0000;
+//    can_500.data.s1 = 0x0000;
+
+//    can_handler::send(can_500);
+}
+
+void limiter_push(void * t_arg)
+{
+    can_500.data.s3 = limiter_on? 0x0000: byteorder::htocs(500);
+    limiter_on = !limiter_on;
+
+    can_handler::send(can_500);
+}
+
+void limiter_release(void * t_arg)
+{
+//    can_500.data.s3 = 0x0000;
+//
+//    can_handler::send(can_500);
+}
+
+void launch_push(void * t_arg)
+{
+    can_500.data.s1 = 0x0000; // neutral off
+    can_500.data.s2 = 0x0000; // launch
+
+    can_handler::send(can_500);
+}
+
+void launch_release(void* t_arg)
+{
+    can_500.data.s2 = byteorder::htocs(0x3ff);  // launch
+
+    can_handler::send(can_500);
+}
+
+void next_layout_push(void * t_arg)
+{
+    can_handler::hz3.NEXT_LAYOUT = 1;
+}
 
 void _main()
 {
-    uint64_t last_cmd{0};
-    uint64_t curr_time = millis();
-    uint16_t last_layout{0};
+    can_500.length = sizeof(CAN_FRAME);
+    can_500.id = 0x500;
+    can_500.data.s0 = byteorder::htocs(0x029A); // shift
+    can_500.data.s1 = 0x0000;                   // neutral
+    can_500.data.s2 = byteorder::htocs(0x3ff);  // launch
+    can_500.data.s3 = 0x0000;                   // limiter
+    
+    upshift.setPushedCallback(&upshift_push, nullptr);
+    upshift.setReleasedCallback(&shift_release, nullptr);
+    
+    downshift.setPushedCallback(&downshift_push, nullptr);
+    downshift.setReleasedCallback(&shift_release, nullptr);
+
+    neutral.setLongPressCallback(&neutral_longpress, nullptr);
+    neutral.setReleasedCallback(&neutral_release, nullptr);
+
+    limiter.setPushedCallback(&limiter_push, nullptr);
+    limiter.setReleasedCallback(&limiter_release, nullptr);
+    
+    
+    launch.setPushedCallback(&launch_push, nullptr);
+    launch.setReleasedCallback(&launch_release, nullptr);
+    
+    next_layout.setPushedCallback(&next_layout_push, nullptr);
+
+    uint64_t launch_time{0};
+    uint64_t last_launch_shift{0};
+    uint64_t curr_time{0};
     
     for(;;) {
-        update_buttons_status();
         curr_time = millis();
 
-        if (curr_time - last_layout > 50) {
-            if (layout_changing) {
-                layout_changing = buttons_status.next_layout;
-            } else if (!layout_changing && buttons_status.next_layout) {
-                layout_changing = true;
-                can_handler::hz3.NEXT_LAYOUT = 1;
-                last_layout = curr_time;
-            }     
-        } 
+        neutral.poll();
+        upshift.poll();
+        downshift.poll();
+        limiter.poll();
+        launch.poll();
+        next_layout.poll();
 
-        if (curr_time - last_cmd > 50) {
-            last_cmd = ([curr_time]() mutable {
-                CAN_FRAME can_shift{0};
-                can_shift.length = sizeof(CAN_FRAME);
-                can_shift.id = 0x500;
-                can_shift.data.s2 = byteorder::htocs(0x3ff);
 
-                if (shifted && !buttons_status.upshift && !buttons_status.downshift) {
-                    last_rest = curr_time;
-                    // Send rest state to EFI
-                    can_shift.data.s0 = byteorder::htocs(0x029A);
-                    can_shift.data.s1 = 0x0000;
-                    can_handler::send(can_shift);
-
-                    shifted = false;
-                }
-
-                if (launched && !buttons_status.launch) {
-                    last_rest = curr_time;
-                    // Send rest state to EFI
-                    can_shift.data.s0 = byteorder::htocs(0x029A);
-                    can_shift.data.s1 = 0x0000;
-                    can_handler::send(can_shift);
-
-                    launched = false;
-                }
-
-                // 1 0
-                if (neutraled && !buttons_status.neutral) {
-                    CAN_FRAME  can_clutch{0};
-                    can_clutch.length = sizeof(CAN_FRAME);
-                    can_clutch.id = 0x501;
-                    can_clutch.data.s0 = byteorder::htocs(0x0001);
-                    can_handler::send(can_clutch);
-
-                    neutraled = false;
-                    
-                    return true;
-                // 0 1
-                } else if (!neutraled && buttons_status.neutral) {
-                    CAN_FRAME  can_clutch{0};
-                    can_clutch.length = sizeof(CAN_FRAME);
-                    can_clutch.id = 0x501;
-                    can_clutch.data.s0 = byteorder::htocs(0x03ff);
-                    can_handler::send(can_clutch);
-
-                    neutraled = true;
-                    return true;
-                }
+        // ( LAUNCH CONTROL
+        launch_time = can_handler::hz3.LAUNCH? curr_time: launch_time;
+        if (curr_time - launch_time < 10000 && curr_time - last_launch_shift > 200 /*&& can_handler::hz3.LAUNCH*/) {
+            bool shift_flag{false};
                 
-                if (curr_time - launch_time > 10000) {
-                    launch_window = false;
+            switch (can_handler::hz3.GEAR) {
+                case 0: {
+                    break;
                 }
+                case 1:
+                case 2:
+                case 3: {
+                    if (can_handler::hz25.RPM >= 12000) {
+                        upshift_push(nullptr);
 
-                if (can_handler::hz3.LAUNCH) {
-//                    Serial.println("entrato");
-                    launch_window = true;
-                    launch_time = millis();
+                        last_launch_shift = curr_time;
+                        shift_flag = true;
+                    }
+                        
+                    break;
                 }
+            }
 
-//                Serial.print("launch_window");
-//                Serial.println(launch_window);
-
-                if (launch_window && can_handler::hz3.GEAR < 4 &&
-                        can_handler::hz25.RPM > 12000 /* && curr_time - shift_time >= 100/*&&
-                        /*!buttons_status.neutral /*can_handler::car_speed > 5*/) { // !!!!!
- 
-                        can_shift.data.s0 = byteorder::htocs(0x006f);
-                        can_shift.data.s1 = 0x0000;
-                        can_handler::send(can_shift);
-
-                        shifted = true;
-
-                        shift_time = millis();
-
-                        return true;
-
-                }
+            if (shift_flag) {
+                // efi rest state after shift
+                delay(40);
+                shift_release(nullptr);
+            }
                 
-                if (buttons_status.upshift && (can_handler::hz3.GEAR < 4 || can_handler::hz3.GEAR >= 8)) {
-                    can_shift.data.s0 = byteorder::htocs(0x006f);
-                    can_shift.data.s1 = buttons_status.neutral ? byteorder::htocs(0x03ff): 0x0000;
-                    can_handler::send(can_shift);
 
-                    //Serial.print("upshift");
-
-                    shifted = true;
-                    return true;
-                }                    
-                
-                if (buttons_status.downshift) {
-                    can_shift.data.s0 = byteorder::htocs(0x03e7);
-                    can_shift.data.s1 = buttons_status.neutral ? byteorder::htocs(0x03ff): 0x0000;
-                    can_handler::send(can_shift);
-
-                    //Serial.print("down");
-
-                    shifted = true;
-
-                    return true;           
-                }
-
-                if (buttons_status.launch) {
-                    can_shift.data.s0 = byteorder::htocs(0x029A);
-                    can_shift.data.s1 = 0x0000;
-                    can_shift.data.s2 = 0x0000;
-                    can_handler::send(can_shift);
-                    //Serial.print("launch");
-
-                    launched = true;
-
-                    return true;
-                }
-                
-                return false;
-            }())? curr_time: last_cmd;
-         
         }
+        // )
 
-    
         display::update();
     }
 }

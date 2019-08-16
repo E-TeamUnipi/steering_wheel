@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "/home/gfabiano/.arduino15/packages/UDOO/tools/**",
+                "/home/gfabiano/.arduino15/packages/UDOO/hardware/sam/1.6.7/**"
+            ],
+            "forcedInclude": [
+                "/home/gfabiano/.arduino15/packages/UDOO/hardware/sam/1.6.7/cores/arduino/Arduino.h"
+            ],
+            "intelliSenseMode": "gcc-x64",
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}
